@@ -52,6 +52,7 @@ static int days_till_exp_warn, days_till_exp_crit;
 
 /* int my_recv(char *, size_t); */
 static int process_arguments (int, char **);
+void test_file (char *);
 void print_help (void);
 void print_usage (void);
 
@@ -90,6 +91,8 @@ static int match_flags = NP_MATCH_EXACT;
 static char *sni = NULL;
 static bool sni_specified = false;
 #endif
+char *client_cert = NULL;
+char *client_privkey = NULL;
 
 #define FLAG_SSL 0x01
 #define FLAG_VERBOSE 0x02
@@ -234,6 +237,9 @@ main (int argc, char **argv)
 		usage(_("With UDP checks, a send/expect string must be specified."));
 	}
 
+	if (client_cert && !client_privkey)
+		usage4 (_("If you use a client certificate you must also specify a private key file"));
+
 	/* set up the timer */
 	signal (SIGALRM, socket_timeout_alarm_handler);
 	alarm (socket_timeout);
@@ -246,7 +252,7 @@ main (int argc, char **argv)
 
 #ifdef HAVE_SSL
 	if (flags & FLAG_SSL){
-		result = np_net_ssl_init_with_hostname(sd, (sni_specified ? sni : NULL));
+		result = np_net_ssl_init_with_hostname_version_and_cert(sd, (sni_specified ? sni : NULL), 0, client_cert, client_privkey);
 		if (result == STATE_OK && check_cert) {
 			result = np_net_ssl_check_cert(days_till_exp_warn, days_till_exp_crit);
 		}
@@ -397,6 +403,14 @@ main (int argc, char **argv)
 }
 
 
+/* check whether a file exists */
+void
+test_file (char *path)
+{
+  if (access(path, R_OK) == 0)
+    return;
+  usage2 (_("file does not exist or is not readable"), path);
+}
 
 /* process command-line arguments */
 static int process_arguments (int argc, char **argv) {
@@ -436,6 +450,8 @@ static int process_arguments (int argc, char **argv) {
 		{"ssl", no_argument, 0, 'S'},
 		{"sni", required_argument, 0, SNI_OPTION},
 		{"certificate", required_argument, 0, 'D'},
+		{"client-cert", required_argument, 0, 'J'},
+		{"private-key", required_argument, 0, 'K'},
 		{0, 0, 0, 0}
 	};
 
@@ -460,7 +476,7 @@ static int process_arguments (int argc, char **argv) {
 	}
 
 	while (1) {
-		c = getopt_long (argc, argv, "+hVv46EAH:s:e:q:m:c:w:t:p:C:W:d:Sr:jD:M:",
+		c = getopt_long (argc, argv, "+hVv46EAH:s:e:q:m:c:w:t:p:C:J:K:W:d:Sr:jD:M:",
 		                 longopts, &option);
 
 		if (c == -1 || c == EOF || c == 1)
@@ -579,6 +595,18 @@ static int process_arguments (int argc, char **argv) {
 			else
 				usage4 (_("Delay must be a positive integer"));
 			break;
+		case 'J': /* use client certificate */
+#ifdef HAVE_SSL
+			test_file(optarg);
+			client_cert = optarg;
+			goto enable_ssl;
+#endif
+		case 'K': /* use client private key */
+#ifdef HAVE_SSL
+			test_file(optarg);
+			client_privkey = optarg;
+			goto enable_ssl;
+#endif
 		case 'D': /* Check SSL cert validity - days 'til certificate expiration */
 #ifdef HAVE_SSL
 #  ifdef USE_OPENSSL /* XXX */
@@ -607,6 +635,7 @@ static int process_arguments (int argc, char **argv) {
 			/* fallthrough if we don't have ssl */
 		case 'S':
 #ifdef HAVE_SSL
+		enable_ssl:
 			flags |= FLAG_SSL;
 #else
 			die (STATE_UNKNOWN, _("Invalid option - SSL is not available"));
@@ -690,6 +719,12 @@ print_help (void)
   printf ("    %s\n", _("Use SSL for the connection."));
   printf (" %s\n", "--sni=STRING");
   printf ("    %s\n", _("SSL server_name"));
+  printf (" %s\n", "-J, --client-cert=FILE");
+  printf ("   %s\n", _("Name of file that contains the client certificate (PEM format)"));
+  printf ("   %s\n", _("to be used in establishing the SSL session"));
+  printf (" %s\n", "-K, --private-key=FILE");
+  printf ("   %s\n", _("Name of file containing the private key (PEM format)"));
+  printf ("   %s\n", _("matching the client certificate"));
 #endif
 
 	printf (UT_WARN_CRIT);
@@ -709,5 +744,6 @@ print_usage (void)
   printf ("%s -H host -p port [-w <warning time>] [-c <critical time>] [-s <send string>]\n",progname);
   printf ("[-e <expect string>] [-q <quit string>][-m <maximum bytes>] [-d <delay>]\n");
   printf ("[-t <timeout seconds>] [-r <refuse state>] [-M <mismatch state>] [-v] [-4|-6] [-j]\n");
+  printf ("[-J <client certificate file>] [-K <private key>]\n");
   printf ("[-D <warn days cert expire>[,<crit days cert expire>]] [-S <use SSL>] [-E]\n");
 }
