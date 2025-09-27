@@ -66,6 +66,7 @@ enum {
 
 int process_arguments (int, char **);
 int validate_arguments (void);
+void test_file (char *);
 void print_help (void);
 void print_usage (void);
 void smtp_quit(void);
@@ -114,6 +115,8 @@ bool ssl_established = false;
 char *localhostname = NULL;
 int sd;
 char buffer[MAX_INPUT_BUFFER];
+char *client_cert = NULL;
+char *client_privkey = NULL;
 enum {
   TCP_PROTOCOL = 1,
   UDP_PROTOCOL = 2,
@@ -198,7 +201,7 @@ main (int argc, char **argv)
 
 #ifdef HAVE_SSL
 		if (use_ssl) {
-			result = np_net_ssl_init_with_hostname(sd, (use_sni ? server_address : NULL));
+			result = np_net_ssl_init_with_hostname_version_and_cert(sd, (use_sni ? server_address : NULL), 0, client_cert, client_privkey);
 			if (result != STATE_OK) {
 				printf (_("CRITICAL - Cannot create SSL context.\n"));
 				close(sd);
@@ -472,6 +475,14 @@ main (int argc, char **argv)
 }
 
 
+/* check whether a file exists */
+void
+test_file (char *path)
+{
+	if (access(path, R_OK) == 0)
+		return;
+	usage2 (_("file does not exist or is not readable"), path);
+}
 
 /* process command-line arguments */
 int
@@ -512,6 +523,8 @@ process_arguments (int argc, char **argv)
 		{"starttls",no_argument,0,'S'},
 		{"sni", no_argument, 0, SNI_OPTION},
 		{"certificate",required_argument,0,'D'},
+		{"client-cert", required_argument, 0, 'J'},
+		{"private-key", required_argument, 0, 'K'},
 		{"ignore-quit-failure",no_argument,0,'q'},
 		{"proxy",no_argument,0,'r'},
 		{0, 0, 0, 0}
@@ -530,7 +543,7 @@ process_arguments (int argc, char **argv)
 	}
 
 	while (1) {
-		c = getopt_long (argc, argv, "+hVv46Lrt:p:f:e:c:w:H:C:R:sSD:F:A:U:P:q",
+		c = getopt_long (argc, argv, "+hVv46Lrt:p:f:e:c:w:H:C:J:K:R:sSD:F:A:U:P:q",
 		                 longopts, &option);
 
 		if (c == -1 || c == EOF)
@@ -627,6 +640,18 @@ process_arguments (int argc, char **argv)
 				usage4 (_("Timeout interval must be a positive integer"));
 			}
 			break;
+		case 'J': /* use client certificate */
+		#ifdef HAVE_SSL
+			test_file(optarg);
+			client_cert = optarg;
+			goto enable_ssl;
+		#endif
+		case 'K': /* use client private key */
+		#ifdef HAVE_SSL
+			test_file(optarg);
+			client_privkey = optarg;
+			goto enable_ssl;
+		#endif
 		case 'D':
 		/* Check SSL cert validity */
 #ifdef USE_OPENSSL
@@ -655,6 +680,7 @@ process_arguments (int argc, char **argv)
 			implicit_tls = true;
 			// fallthrough
 		case 's':
+		enable_ssl:
 		/* ssl */
 			use_ssl = true;
 			server_port = SMTPS_PORT;
@@ -728,6 +754,9 @@ process_arguments (int argc, char **argv)
 			usage4 (_("Set either -s/--ssl/--tls or -S/--starttls"));
 		}
 	}
+
+	if (client_cert && !client_privkey)
+		usage4 (_("If you use a client certificate you must also specify a private key file"));
 
 	if (server_port_option != 0) {
 		server_port = server_port_option;
@@ -897,6 +926,12 @@ print_help (void)
   printf ("    %s\n", _("Use STARTTLS for the connection."));
   printf (" %s\n", "--sni");
   printf ("    %s\n", _("Enable SSL/TLS hostname extension support (SNI)"));
+  printf (" %s\n", "-J, --client-cert=FILE");
+  printf ("   %s\n", _("Name of file that contains the client certificate (PEM format)"));
+  printf ("   %s\n", _("to be used in establishing the SSL session"));
+  printf (" %s\n", "-K, --private-key=FILE");
+  printf ("   %s\n", _("Name of file containing the private key (PEM format)"));
+  printf ("   %s\n", _("matching the client certificate"));
 #endif
 
 	printf (" %s\n", "-A, --authtype=STRING");
@@ -934,5 +969,6 @@ print_usage (void)
   printf ("%s -H host [-p port] [-4|-6] [-e expect] [-C command] [-R response] [-f from addr]\n", progname);
   printf ("[-A authtype -U authuser -P authpass] [-w warn] [-c crit] [-t timeout] [-q]\n");
   printf ("[-F fqdn] [-S] [-L] [-D warn days cert expire[,crit days cert expire]] [-r] [--sni] [-v] \n");
+  printf ("[-J <client certificate file>] [-K <private key>]\n");
 }
 
