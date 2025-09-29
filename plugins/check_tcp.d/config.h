@@ -18,6 +18,8 @@ typedef struct {
 	size_t server_expect_count;
 	bool use_tls;
 #ifdef HAVE_SSL
+	char *client_cert;
+	char *client_privkey;
 	char *sni;
 	bool sni_specified;
 	bool check_cert;
@@ -57,6 +59,8 @@ check_tcp_config check_tcp_config_init() {
 		.server_expect_count = 0,
 		.use_tls = false,
 #ifdef HAVE_SSL
+		.client_cert = NULL,
+		.client_privkey = NULL,
 		.sni = NULL,
 		.sni_specified = false,
 		.check_cert = false,

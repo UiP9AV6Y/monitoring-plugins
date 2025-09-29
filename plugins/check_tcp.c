@@ -35,6 +35,7 @@ const char *email = "devel@monitoring-plugins.org";
 #include "./common.h"
 #include "./netutils.h"
 #include "./utils.h"
+#include "./utils_validate.h"
 #include "./check_tcp.d/config.h"
 #include "output.h"
 #include "states.h"
@@ -268,8 +269,9 @@ int main(int argc, char **argv) {
 #ifdef HAVE_SSL
 	if (config.use_tls) {
 		mp_subcheck tls_connection_result = mp_subcheck_init();
-		mp_state_enum result = np_net_ssl_init_with_hostname(
-			socket_descriptor, (config.sni_specified ? config.sni : NULL));
+		mp_state_enum result = np_net_ssl_init_with_hostname_version_and_cert(
+			socket_descriptor, (config.sni_specified ? config.sni : NULL), 0,
+			config.client_cert, config.client_privkey);
 		tls_connection_result = mp_set_subcheck_default_state(tls_connection_result, result);
 
 		if (result == STATE_OK) {
@@ -518,6 +520,8 @@ static check_tcp_config_wrapper process_arguments(int argc, char **argv, check_t
 		{"ssl", no_argument, 0, 'S'},
 		{"sni", required_argument, 0, SNI_OPTION},
 		{"certificate", required_argument, 0, 'D'},
+		{"client-cert", required_argument, 0, 'J'},
+		{"private-key", required_argument, 0, 'K'},
 		{"output-format", required_argument, 0, output_format_index},
 		{0, 0, 0, 0}};
 
@@ -548,7 +552,7 @@ static check_tcp_config_wrapper process_arguments(int argc, char **argv, check_t
 	while (true) {
 		int option = 0;
 		int option_index =
-			getopt_long(argc, argv, "+hVv46EAH:s:e:q:m:c:w:t:p:C:W:d:Sr:jD:M:", longopts, &option);
+			getopt_long(argc, argv, "+hVv46EAH:s:e:q:m:c:w:t:p:C:J:K:W:d:Sr:jD:M:", longopts, &option);
 
 		if (option_index == -1 || option_index == EOF || option_index == 1) {
 			break;
@@ -673,6 +677,24 @@ static check_tcp_config_wrapper process_arguments(int argc, char **argv, check_t
 				usage4(_("Delay must be a positive integer"));
 			}
 			break;
+		case 'J': /* use client certificate */
+#ifdef HAVE_SSL
+			validate_file_exists(optarg);
+			config.client_cert = optarg;
+			config.use_tls = true;
+#else
+			die(STATE_UNKNOWN, _("Invalid option - SSL is not available"));
+#endif
+			break;
+		case 'K': /* use client private key */
+#ifdef HAVE_SSL
+			validate_file_exists(optarg);
+			config.client_privkey = optarg;
+			config.use_tls = true;
+#else
+			die(STATE_UNKNOWN, _("Invalid option - SSL is not available"));
+#endif
+			break;
 		case 'D': /* Check SSL cert validity - days 'til certificate expiration */
 #ifdef HAVE_SSL
 #	ifdef USE_OPENSSL /* XXX */
@@ -749,6 +771,9 @@ static check_tcp_config_wrapper process_arguments(int argc, char **argv, check_t
 			_("Invalid hostname, address or socket"), config.server_address);
 	}
 
+	if (config.client_cert && !config.client_privkey)
+		usage4 (_("If you use a client certificate you must also specify a private key file"));
+
 	check_tcp_config_wrapper result = {
 		.config = config,
 		.errorcode = OK,
@@ -806,6 +831,12 @@ void print_help(const char *service) {
 	printf("    %s\n", _("Use SSL for the connection."));
 	printf(" %s\n", "--sni=STRING");
 	printf("    %s\n", _("SSL server_name"));
+	printf(" %s\n", "-J, --client-cert=FILE");
+	printf("   %s\n", _("Name of file that contains the client certificate (PEM format)"));
+	printf("   %s\n", _("to be used in establishing the SSL session"));
+	printf(" %s\n", "-K, --private-key=FILE");
+	printf("   %s\n", _("Name of file containing the private key (PEM format)"));
+	printf("   %s\n", _("matching the client certificate"));
 #endif
 
 	printf(UT_WARN_CRIT);
@@ -824,5 +855,6 @@ void print_usage(void) {
 		   progname);
 	printf("[-e <expect string>] [-q <quit string>][-m <maximum bytes>] [-d <delay>]\n");
 	printf("[-t <timeout seconds>] [-r <refuse state>] [-M <mismatch state>] [-v] [-4|-6] [-j]\n");
+	printf("[-J <client certificate file>] [-K <private key>]\n");
 	printf("[-D <warn days cert expire>[,<crit days cert expire>]] [-S <use SSL>] [-E]\n");
 }
